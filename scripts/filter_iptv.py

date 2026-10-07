@@ -1,0 +1,75 @@
+import re
+import urllib.request
+
+SOURCE_URL = "https://iptv-org.github.io/iptv/languages/eng.m3u"
+OUTPUT_FILE = "custom_english_iptv.m3u"
+
+TARGET_CATEGORIES = {
+    "sport",
+    "sports",
+    "news",
+    "movies",
+    "movie",
+    "series",
+    "comedy",
+    "documentary",
+    "weather",
+    "legislative",
+    "business",
+    "music",
+}
+
+GROUP_TITLE_REGEX = re.compile(r'group-title="([^"]*)"', re.IGNORECASE)
+
+EPG_URLS = (
+    "https://epg.pw/xmltv/epg_US.xml.gz,"
+    "https://epg.pw/xmltv/epg_GB.xml.gz,"
+    "https://iptv-org.github.io/epg/guides/us/tvguide.com.epg.xml.gz"
+)
+
+
+def download_and_filter():
+    print(f"Downloading playlist from: {SOURCE_URL}...")
+    headers = {"User-Agent": "Mozilla/5.0"}
+    req = urllib.request.Request(SOURCE_URL, headers=headers)
+
+    with urllib.request.urlopen(req) as response:
+        content = response.read().decode("utf-8", errors="ignore")
+
+    lines = content.splitlines()
+    print(f"Downloaded {len(lines)} lines. Filtering channels...")
+
+    filtered_entries = []
+    seen_urls = set()
+    current_meta_lines = []
+
+    for line in lines:
+        line = line.strip()
+        if not line or line == "#EXTM3U":
+            continue
+
+        if line.startswith("#"):
+            current_meta_lines.append(line)
+        else:
+            stream_url = line
+            if stream_url not in seen_urls and current_meta_lines:
+                meta_block = " ".join(current_meta_lines)
+                match = GROUP_TITLE_REGEX.search(meta_block)
+                group = match.group(1).strip().lower() if match else ""
+
+                if any(cat in group for cat in TARGET_CATEGORIES):
+                    seen_urls.add(stream_url)
+                    filtered_entries.append("\n".join(current_meta_lines))
+                    filtered_entries.append(stream_url)
+
+            current_meta_lines = []
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        f.write(f'#EXTM3U url-tvg="{EPG_URLS}" x-tvg-url="{EPG_URLS}"\n')
+        f.write("\n".join(filtered_entries) + "\n")
+
+    print(f"\nDone! Filtered {len(seen_urls)} streams into: {OUTPUT_FILE}")
+
+
+if __name__ == "__main__":
+    download_and_filter()
