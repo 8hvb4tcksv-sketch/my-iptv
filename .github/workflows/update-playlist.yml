@@ -21,19 +21,62 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Run Filter Script
+      - name: Filter Playlist
         run: |
           mkdir -p public
-          python scripts/filter_iptv.py
-          mv custom_english_iptv.m3u public/playlist.m3u
+          python -c '
+          import re
+          import urllib.request
+
+          SOURCE_URL = "https://iptv-org.github.io/iptv/languages/eng.m3u"
+          OUTPUT_FILE = "public/playlist.m3u"
+          TARGET_CATEGORIES = {
+              "sport", "sports", "news", "movies", "movie", "series",
+              "comedy", "documentary", "weather", "legislative", "business", "music"
+          }
+          GROUP_TITLE_REGEX = re.compile(r"group-title=\"([^\"]*)\"", re.IGNORECASE)
+          EPG_URLS = "https://epg.pw/xmltv/epg_US.xml.gz,https://epg.pw/xmltv/epg_GB.xml.gz,https://iptv-org.github.io/epg/guides/us/tvguide.com.epg.xml.gz"
+
+          print("Downloading source playlist...")
+          headers = {"User-Agent": "Mozilla/5.0"}
+          req = urllib.request.Request(SOURCE_URL, headers=headers)
+          with urllib.request.urlopen(req) as resp:
+              content = resp.read().decode("utf-8", errors="ignore")
+
+          lines = content.splitlines()
+          filtered_entries = []
+          seen = set()
+          meta = []
+
+          for line in lines:
+              line = line.strip()
+              if not line or line == "#EXTM3U":
+                  continue
+              if line.startswith("#"):
+                  meta.append(line)
+              else:
+                  url = line
+                  if url not in seen and meta:
+                      block = " ".join(meta)
+                      match = GROUP_TITLE_REGEX.search(block)
+                      grp = match.group(1).strip().lower() if match else ""
+                      if any(c in grp for c in TARGET_CATEGORIES):
+                          seen.add(url)
+                          filtered_entries.append("\n".join(meta))
+                          filtered_entries.append(url)
+                  meta = []
+
+          with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+              f.write(f"#EXTM3U url-tvg=\"{EPG_URLS}\" x-tvg-url=\"{EPG_URLS}\"\n")
+              f.write("\n".join(filtered_entries) + "\n")
+
+          print(f"Success! Saved {len(seen)} channels to {OUTPUT_FILE}")
+          '
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
